@@ -28,7 +28,8 @@ An **Agentic RAG** (Retrieval-Augmented Generation) system for verifying claims 
 ├── scripts/
 │   └── ingest.py        # CLI script for document ingestion
 ├── tests/               # Test suite
-├── data/                # Place documents here for ingestion
+├── data/
+│   └── Google.txt       # Sample knowledge base (Google article)
 ├── requirements.txt
 ├── pyproject.toml
 └── .env.example
@@ -64,13 +65,15 @@ cp .env.example .env
 # Edit .env and add your OPENAI_API_KEY
 ```
 
-### 5. Ingest documents (optional)
+### 5. Ingest documents
 
-Place `.txt` or `.pdf` files in the `data/` directory, then run:
+The repo ships with `data/Google.txt` (a comprehensive article about Google). Ingest it into the vector store:
 
 ```bash
 python -m scripts.ingest
 ```
+
+You can also add more `.txt` or `.pdf` files to the `data/` directory and re-run the command.
 
 ### 6. Start the API server
 
@@ -90,12 +93,56 @@ The server starts at **http://localhost:8000**. API docs are available at **http
 | POST   | `/api/v1/verify`    | Verify a claim via Agentic RAG   |
 | POST   | `/api/v1/ingest`    | Trigger document ingestion       |
 
-### Example: Verify a claim
+### Example: Verify claims
+
+The included `data/Google.txt` knowledge base lets you verify claims about Google. Here are some examples:
+
+**True claim – founding date:**
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/verify \
   -H "Content-Type: application/json" \
-  -d '{"claim": "The Earth revolves around the Sun"}'
+  -d '{"claim": "Google was founded on September 4, 1998, by Larry Page and Sergey Brin."}'
+```
+
+**True claim – initial investment:**
+
+```bash
+curl -X POST http://localhost:8000/api/v1/verify \
+  -H "Content-Type: application/json" \
+  -d '{"claim": "Google received its first funding of $100,000 from Andy Bechtolsheim, co-founder of Sun Microsystems."}'
+```
+
+**False claim – CEO:**
+
+```bash
+curl -X POST http://localhost:8000/api/v1/verify \
+  -H "Content-Type: application/json" \
+  -d '{"claim": "Jeff Bezos is the current CEO of Google."}'
+```
+
+**True claim – Alphabet restructuring:**
+
+```bash
+curl -X POST http://localhost:8000/api/v1/verify \
+  -H "Content-Type: application/json" \
+  -d '{"claim": "In 2015, Google was reorganized as a wholly owned subsidiary of Alphabet Inc."}'
+```
+
+**False claim – search engine name origin:**
+
+```bash
+curl -X POST http://localhost:8000/api/v1/verify \
+  -H "Content-Type: application/json" \
+  -d '{"claim": "The name Google comes from the word galaxy."}'
+```
+
+**True claim – products:**
+
+```bash
+curl -X POST http://localhost:8000/api/v1/verify \
+  -H "Content-Type: application/json" \
+  -d '{"claim": "Google develops the Android mobile operating system and the Chrome web browser."}'
 ```
 
 ---
