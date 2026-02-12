@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     chunk_size: int = 1000
     chunk_overlap: int = 200
     retriever_top_k: int = 5
+    similarity_threshold: float = 0.7
+
+    # --- Web Search ---
+    tavily_api_key: str = ""
 
     # --- API ---
     api_host: str = "0.0.0.0"
