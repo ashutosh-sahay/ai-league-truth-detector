@@ -18,7 +18,8 @@ class Settings(BaseSettings):
     # --- RAG ---
     chunk_size: int = 1000
     chunk_overlap: int = 200
-    retriever_top_k: int = 5
+    retriever_top_k: int = 20
+    retriever_top_n: int = 5
     similarity_threshold: float = 0.7
 
     # --- Web Search ---

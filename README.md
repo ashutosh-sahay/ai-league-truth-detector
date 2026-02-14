@@ -8,28 +8,29 @@ An **Agentic RAG** (Retrieval-Augmented Generation) system for verifying claims 
 
 ```
 ├── src/
-│   ├── agents/          # LangGraph agent definitions
-│   │   ├── state.py     # Shared agent state
-│   │   └── rag_agent.py # Core RAG agent graph
-│   ├── rag/             # RAG pipeline
-│   │   ├── ingestion.py # Document loading & chunking
-│   │   ├── embeddings.py# Embedding model setup
-│   │   ├── vector_store.py # ChromaDB operations
-│   │   └── retriever.py # High-level retrieval interface
-│   ├── tools/           # Agent tools
-│   │   ├── retrieval.py # Vector store search tool
-│   │   └── search.py    # Tavily web search integration
-│   ├── api/             # FastAPI application
-│   │   ├── app.py       # App factory & middleware
-│   │   └── routes.py    # API endpoints
-│   ├── config.py        # Centralised settings
-│   ├── logger.py        # Logging configuration
-│   └── main.py          # Entry point
+│   ├── agents/            # LangGraph agent definitions
+│   │   ├── state.py       # Shared agent state & ClaimEvaluation schema
+│   │   └── rag_agent.py   # Core RAG agent graph (6-node LangGraph workflow)
+│   ├── rag/               # RAG pipeline
+│   │   ├── ingestion.py   # Document loading, chunking & text ingestion
+│   │   ├── embeddings.py  # OpenAI embedding model setup
+│   │   ├── vector_store.py# ChromaDB operations & cache management
+│   │   ├── retriever.py   # Hybrid retriever (vector + BM25) & re-ranked retrieval
+│   │   └── re_ranker.py   # FlashRank re-ranking via ContextualCompressionRetriever
+│   ├── tools/             # Agent tools
+│   │   ├── retrieval.py   # Vector store search tool (LangChain @tool)
+│   │   └── search.py      # Tavily web search integration
+│   ├── api/               # FastAPI application
+│   │   ├── app.py         # App factory & CORS middleware
+│   │   └── routes.py      # API endpoints (/verify, /ingest, /health)
+│   ├── config.py          # Centralised settings (Pydantic Settings)
+│   ├── logger.py          # Logging configuration
+│   └── main.py            # Entry point (uvicorn)
 ├── scripts/
-│   └── ingest.py        # CLI script for document ingestion
-├── tests/               # Test suite
+│   └── ingest.py          # CLI script for document ingestion
+├── tests/                 # Test suite
 ├── data/
-│   └── Google.txt       # Sample knowledge base (Google article)
+│   └── Google.txt         # Sample knowledge base (Google article)
 ├── requirements.txt
 ├── pyproject.toml
 └── .env.example
@@ -72,9 +73,6 @@ OPENAI_API_KEY=your-openai-api-key-here
 
 # Required: Tavily API key for web search fallback
 TAVILY_API_KEY=your-tavily-api-key-here
-
-# Optional: Similarity threshold for determining relevance (default: 0.7)
-SIMILARITY_THRESHOLD=0.7
 ```
 
 **Getting API Keys:**
@@ -89,7 +87,7 @@ The repo ships with `data/Google.txt` (a comprehensive article about Google). In
 python -m scripts.ingest
 ```
 
-You can also add more `.txt` or `.pdf` files to the `data/` directory and re-run the command.
+You can also add more `.txt` files to the `data/` directory and re-run the command.
 
 ### 6. Start the API server
 
@@ -103,77 +101,86 @@ The server starts at **http://localhost:8000**. API docs are available at **http
 
 ## How It Works
 
-The system uses an intelligent multi-stage verification workflow:
+The system verifies claims through an **LLM-driven** evaluation workflow. There are no hard-coded distance thresholds or similarity cut-offs — the LLM itself decides whether the retrieved evidence is sufficient.
 
-1. **Local Retrieval**: Query is first searched against the local vector store (ChromaDB)
-2. **Relevance Check**: Similarity scores are evaluated against a configurable threshold (default: 0.7)
-3. **Intelligent Fallback**:
-   - If local context is relevant → LLM analyzes using local knowledge
-   - If local context is insufficient → Tavily web search is triggered
-4. **Web Search Integration**: Fresh information is retrieved from the web via Tavily API
-5. **Immediate Response**: LLM analyzes web results and returns verdict to user
-6. **Background Ingestion**: Web results are asynchronously embedded and added to vector store for future queries
+### Step-by-step flow
 
-This creates a **self-improving knowledge base** that expands automatically based on user queries.
+1. **Retrieve** — The user's claim is run through a hybrid retrieval pipeline:
+   - A **vector similarity search** (ChromaDB, cosine) fetches the top-20 semantically similar chunks
+   - A **BM25 keyword search** fetches the top-20 keyword-matched chunks from the same corpus
+   - Both candidate sets are merged with weighted fusion (70% vector / 30% BM25)
+   - A **FlashRank cross-encoder** re-ranks the merged candidates and selects the top 5
 
-### Similarity Scoring and Threshold Logic
+2. **Evaluate (RAG)** — The top-5 re-ranked documents are passed to **GPT-4o** along with the claim. The LLM returns a structured `ClaimEvaluation`:
+   - `evidence_found` (bool) — did the documents contain relevant information?
+   - `confidence` (float, 0.0 – 1.0) — how well does the evidence address the claim?
+   - `claim_verified` (bool) — is the claim true based on the evidence?
+   - `verification_data` (str) — detailed analysis
 
-Understanding how the system determines relevance:
+3. **Route** — The agent checks the LLM's own assessment:
+   - If `evidence_found=True` **and** `confidence > 0.7` → skip to final output (local KB was sufficient)
+   - Otherwise → fall back to web search
 
-#### Distance Scores (ChromaDB)
+4. **Web Search** — The claim is sent to the **Tavily API** which returns up to 5 web results with titles, URLs, and content snippets.
 
-ChromaDB uses **L2 distance** for similarity search, where:
-- **Lower scores = higher similarity** (0 = perfect match)
-- Typical meaningful scores range from `0.0` to `2.0`
-- Scores > `2.0` indicate very low similarity
+5. **Evaluate (Web)** — The same GPT-4o evaluation runs again, this time against the web results, producing a fresh `ClaimEvaluation`.
 
-#### Threshold Calculation
+6. **Sync to RAG** — The web results are chunked, tagged with `{"source": "web_search"}` metadata, embedded, and added to ChromaDB so that future queries on the same topic are answered locally.
 
-The `SIMILARITY_THRESHOLD` setting (default: `0.7` = 70% similarity) is converted to a distance threshold:
+7. **Format Output** — The final verdict is packaged into a structured JSON response and returned to the caller.
 
-```
-distance_threshold = 2.5 × (1 - SIMILARITY_THRESHOLD)
-```
+### Agent Graph (LangGraph)
 
-**Examples:**
-- `SIMILARITY_THRESHOLD=0.7` → `distance_threshold=0.75`
-- `SIMILARITY_THRESHOLD=0.5` → `distance_threshold=1.25`
-- `SIMILARITY_THRESHOLD=0.9` → `distance_threshold=0.25` (very strict)
-
-#### Decision Logic
+The workflow is implemented as a **6-node LangGraph** state machine, compiled once at startup and reused across all requests.
 
 ```
-If top_result_distance <= distance_threshold:
-    Use local knowledge base ✅
-Else:
-    Trigger web search 🔍
+          ┌───────────┐
+          │   START   │
+          └─────┬─────┘
+                │
+          ┌─────▼─────┐
+          │  retrieve  │  Hybrid (Vector + BM25) → FlashRank re-rank → top 5
+          └─────┬─────┘
+                │
+        ┌───────▼────────┐
+        │  evaluate_rag  │  GPT-4o: evidence_found? confidence? claim_verified?
+        └───────┬────────┘
+                │
+        ┌───────▼────────┐
+        │     route      │  evidence_found AND confidence > 0.7 ?
+        └──┬──────────┬──┘
+       Yes │          │ No
+           │          │
+           │    ┌─────▼────────┐
+           │    │  web_search  │  Tavily API → 5 results
+           │    └─────┬────────┘
+           │          │
+           │    ┌─────▼────────┐
+           │    │ evaluate_web │  GPT-4o: re-evaluate against web evidence
+           │    └─────┬────────┘
+           │          │
+           │    ┌─────▼────────┐
+           │    │ sync_to_rag  │  Chunk + embed web results → ChromaDB
+           │    └─────┬────────┘
+           │          │
+        ┌──▼──────────▼──┐
+        │  format_output  │  Build JSON response
+        └────────┬────────┘
+                 │
+           ┌─────▼─────┐
+           │    END    │
+           └───────────┘
 ```
 
-#### Tuning Recommendations
+### Self-Improving Knowledge Base
 
-Adjust `SIMILARITY_THRESHOLD` based on your needs:
+Every time the web search path is taken, new knowledge is automatically ingested back into the vector store:
+- Web results are split into chunks using `RecursiveCharacterTextSplitter`
+- Each chunk is tagged with metadata `{"source": "web_search", "query": "<original claim>"}`
+- Chunks are embedded and stored in ChromaDB
+- Retriever caches are cleared so the next query sees the updated corpus
 
-| Threshold | Distance | Behavior | Use Case |
-|-----------|----------|----------|----------|
-| `0.9` | `0.25` | Very strict - requires near-exact matches | High-precision, avoid false positives |
-| `0.7` | `0.75` | Balanced (default) | General purpose |
-| `0.5` | `1.25` | Lenient - accepts broader matches | Maximize local KB usage, reduce API costs |
-| `0.3` | `1.75` | Very lenient | Minimize web searches |
-
-**Monitoring in Logs:**
-
-Watch for these log entries to track decision-making:
-```
-INFO | Top distance score: 0.639 (lower is better), Distance threshold: 0.75, Is relevant: True
-INFO | Context is relevant, routing to reasoning
-```
-
-or
-
-```
-INFO | Top distance score: 0.870 (lower is better), Distance threshold: 0.75, Is relevant: False
-INFO | Context not relevant, routing to web search
-```
+This means the first query about a new topic triggers a web search, but subsequent queries on the same topic are answered entirely from local knowledge.
 
 ---
 
@@ -183,15 +190,34 @@ INFO | Context not relevant, routing to web search
 |--------|---------------------|------------------------------------------------|
 | GET    | `/api/v1/health`    | Health check                                   |
 | POST   | `/api/v1/verify`    | Verify a claim (with intelligent web fallback) |
-| POST   | `/api/v1/ingest`    | Trigger document ingestion from data/ folder   |
+| POST   | `/api/v1/ingest`    | Trigger document ingestion from `data/` folder |
+
+### Request / Response
+
+**POST `/api/v1/verify`**
+
+Request body:
+```json
+{
+  "claim": "Google was founded on September 4, 1998."
+}
+```
+
+Response body:
+```json
+{
+  "claim": "Google was founded on September 4, 1998.",
+  "verification_data": "The evidence confirms that Google was founded on September 4, 1998, by Larry Page and Sergey Brin while they were PhD students at Stanford University.",
+  "evidence_source": "RAG Store",
+  "claim_verified": true
+}
+```
+
+- `evidence_source` is `"RAG Store"` when answered from local knowledge, or `"WEB"` when web search was used.
 
 ### Example: Verify claims
 
-#### Claims about Google (from local knowledge base)
-
-The included `data/Google.txt` knowledge base lets you verify claims about Google. These will be answered from local context:
-
-**True claim – founding date:**
+#### Claims about Google (answered from local knowledge base)
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/verify \
@@ -199,15 +225,11 @@ curl -X POST http://localhost:8000/api/v1/verify \
   -d '{"claim": "Google was founded on September 4, 1998, by Larry Page and Sergey Brin."}'
 ```
 
-**True claim – initial investment:**
-
 ```bash
 curl -X POST http://localhost:8000/api/v1/verify \
   -H "Content-Type: application/json" \
   -d '{"claim": "Google received its first funding of $100,000 from Andy Bechtolsheim, co-founder of Sun Microsystems."}'
 ```
-
-**False claim – CEO:**
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/verify \
@@ -215,33 +237,13 @@ curl -X POST http://localhost:8000/api/v1/verify \
   -d '{"claim": "Jeff Bezos is the current CEO of Google."}'
 ```
 
-**True claim – Alphabet restructuring:**
-
 ```bash
 curl -X POST http://localhost:8000/api/v1/verify \
   -H "Content-Type: application/json" \
   -d '{"claim": "In 2015, Google was reorganized as a wholly owned subsidiary of Alphabet Inc."}'
 ```
 
-**False claim – search engine name origin:**
-
-```bash
-curl -X POST http://localhost:8000/api/v1/verify \
-  -H "Content-Type: application/json" \
-  -d '{"claim": "The name Google comes from the word galaxy."}'
-```
-
-**True claim – products:**
-
-```bash
-curl -X POST http://localhost:8000/api/v1/verify \
-  -H "Content-Type: application/json" \
-  -d '{"claim": "Google develops the Android mobile operating system and the Chrome web browser."}'
-```
-
 #### Claims requiring web search (not in local KB)
-
-For claims outside the local knowledge base, the system automatically falls back to web search:
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/verify \
@@ -255,7 +257,43 @@ curl -X POST http://localhost:8000/api/v1/verify \
   -d '{"claim": "Python 3.12 was released in October 2023."}'
 ```
 
-**Note**: After web search, the retrieved information is automatically added to the vector store. Subsequent queries about the same topic will use the cached local knowledge.
+After web search, retrieved information is automatically synced to the vector store. Subsequent queries about the same topic will use cached local knowledge.
+
+---
+
+## Configuration
+
+All settings are loaded from `.env` (or environment variables) via Pydantic Settings.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OPENAI_API_KEY` | `""` | OpenAI API key (required) |
+| `OPENAI_MODEL` | `gpt-4o` | LLM model for claim evaluation |
+| `OPENAI_EMBEDDING_MODEL` | `text-embedding-3-small` | Embedding model |
+| `TAVILY_API_KEY` | `""` | Tavily API key for web search (required) |
+| `CHROMA_PERSIST_DIR` | `./chroma_db` | ChromaDB storage directory |
+| `CHROMA_COLLECTION_NAME` | `truth_detector` | ChromaDB collection name |
+| `CHUNK_SIZE` | `1000` | Document chunk size (characters) |
+| `CHUNK_OVERLAP` | `200` | Overlap between chunks |
+| `RETRIEVER_TOP_K` | `20` | Candidates from each retriever (vector + BM25) |
+| `RETRIEVER_TOP_N` | `5` | Final documents after re-ranking |
+| `API_HOST` | `0.0.0.0` | Server bind address |
+| `API_PORT` | `8000` | Server port |
+| `LOG_LEVEL` | `INFO` | Logging level |
+
+### Resetting the Vector Store
+
+To clear all stored embeddings and start fresh:
+
+```bash
+rm -rf ./chroma_db
+```
+
+Then re-ingest your documents:
+
+```bash
+python -m scripts.ingest
+```
 
 ---
 
@@ -269,13 +307,19 @@ pytest
 
 ## Tech Stack
 
-- **LangChain + LangGraph** – Agent orchestration & RAG chains
-- **OpenAI** – LLM (GPT-4o) and embeddings (text-embedding-3-small)
-- **Tavily** – Web search API for real-time information retrieval
-- **ChromaDB** – Vector storage & similarity search
-- **FastAPI** – REST API layer with async background tasks
-- **Pydantic** – Settings & data validation
-- **Loguru** – Structured logging
+| Component | Technology | Purpose |
+|-----------|-----------|---------|
+| Agent orchestration | **LangGraph** | State machine graph for the verification workflow |
+| LLM framework | **LangChain** + **langchain-classic** | Retriever abstractions, structured output, tool integration |
+| LLM | **OpenAI GPT-4o** | Claim evaluation with structured JSON output |
+| Embeddings | **OpenAI text-embedding-3-small** | Document and query embedding |
+| Vector store | **ChromaDB** (cosine similarity) | Persistent local vector storage |
+| Keyword search | **BM25** (rank-bm25) | Sparse retrieval for hybrid search |
+| Re-ranking | **FlashRank** | Cross-encoder re-ranking of retrieval candidates |
+| Web search | **Tavily** | Real-time web search fallback |
+| API | **FastAPI** + **uvicorn** | REST API with auto-generated OpenAPI docs |
+| Configuration | **Pydantic Settings** | Type-safe settings from `.env` |
+| Logging | **Loguru** | Structured logging throughout the pipeline |
 
 ---
 

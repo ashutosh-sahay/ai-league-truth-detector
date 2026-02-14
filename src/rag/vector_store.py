@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from langchain_community.vectorstores import Chroma
+from langchain_chroma import Chroma
 from langchain_core.documents import Document
 from loguru import logger
 
@@ -19,11 +19,12 @@ def get_vector_store() -> Chroma:
         collection_name=settings.chroma_collection_name,
         embedding_function=get_embedding_model(),
         persist_directory=settings.chroma_persist_dir,
+        collection_metadata={"hnsw:space": "cosine"}
     )
 
 
 def add_documents(documents: list[Document]) -> None:
-    """Add document chunks to the vector store."""
+    """Add document chunks to the vector store and invalidate retriever caches."""
     if not documents:
         logger.warning("No documents to add.")
         return
@@ -31,6 +32,38 @@ def add_documents(documents: list[Document]) -> None:
     store = get_vector_store()
     store.add_documents(documents)
     logger.info(f"Added {len(documents)} document(s) to vector store.")
+
+    # Invalidate cached retrievers so they rebuild with the new documents
+    clear_retriever_caches()
+
+
+def clear_retriever_caches() -> None:
+    """Clear cached hybrid retriever and re-ranker so they rebuild with fresh data.
+
+    Uses lazy imports to avoid circular dependency with retriever / re_ranker modules.
+    """
+    from src.rag.retriever import get_hybrid_retriever
+    from src.rag.re_ranker import get_re_ranker_retriever
+
+    get_hybrid_retriever.cache_clear()
+    get_re_ranker_retriever.cache_clear()
+    logger.info("Cleared retriever caches after document update.")
+
+
+def get_all_documents() -> list[Document]:
+    """Retrieve all documents stored in the vector store.
+
+    Returns:
+        List of Document objects with page_content and metadata.
+    """
+    store = get_vector_store()
+    data = store.get(include=["documents", "metadatas"])
+    documents = [
+        Document(page_content=text, metadata=meta or {})
+        for text, meta in zip(data["documents"], data["metadatas"])
+    ]
+    logger.info(f"Retrieved {len(documents)} document(s) from vector store.")
+    return documents
 
 
 def similarity_search(query: str, k: int | None = None) -> list[Document]:
