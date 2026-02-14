@@ -19,3 +19,5 @@ class AgentState(BaseModel):
     context: str = ""
     query: str = ""
     confidence: float = 0.0
+    is_relevant: bool = True
+    web_results: str = ""

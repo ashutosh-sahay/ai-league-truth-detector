@@ -64,3 +64,30 @@ def ingest(data_dir: str | Path = "data") -> list[Document]:
     if not docs:
         return []
     return split_documents(docs)
+
+
+def ingest_text_content(content: str, metadata: dict | None = None) -> list[Document]:
+    """Ingest raw text content directly without file operations.
+
+    This function is useful for ingesting web search results or other
+    dynamically retrieved content.
+
+    Args:
+        content: Raw text content to ingest
+        metadata: Optional metadata dictionary to attach to the document
+
+    Returns:
+        List of document chunks ready for embedding
+    """
+    if not content:
+        logger.warning("Empty content provided for ingestion")
+        return []
+
+    # Create a Document object with the content
+    metadata = metadata or {}
+    doc = Document(page_content=content, metadata=metadata)
+
+    # Split the document into chunks using the existing splitter
+    chunks = split_documents([doc])
+    logger.info(f"Ingested text content into {len(chunks)} chunk(s)")
+    return chunks

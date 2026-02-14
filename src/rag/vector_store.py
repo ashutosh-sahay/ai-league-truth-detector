@@ -40,3 +40,23 @@ def similarity_search(query: str, k: int | None = None) -> list[Document]:
     results = store.similarity_search(query, k=k)
     logger.debug(f"Retrieved {len(results)} result(s) for query: {query[:80]}...")
     return results
+
+
+def similarity_search_with_scores(query: str, k: int | None = None) -> list[tuple[Document, float]]:
+    """Run a similarity search and return documents with their similarity scores.
+
+    Args:
+        query: The search query string
+        k: Number of results to return (defaults to retriever_top_k)
+
+    Returns:
+        List of tuples containing (Document, similarity_score)
+        Lower scores indicate higher similarity in ChromaDB
+    """
+    k = k or settings.retriever_top_k
+    store = get_vector_store()
+    results = store.similarity_search_with_score(query, k=k)
+    logger.debug(
+        f"Retrieved {len(results)} result(s) with scores for query: {query[:80]}..."
+    )
+    return results
