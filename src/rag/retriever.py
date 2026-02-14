@@ -2,57 +2,63 @@
 
 from __future__ import annotations
 
+from functools import lru_cache
+
+from langchain_classic.retrievers import EnsembleRetriever
+from langchain_community.retrievers import BM25Retriever
+from langchain_core.documents import Document
 from loguru import logger
 
 from src.config import settings
-from src.rag.vector_store import similarity_search_with_scores
+from src.rag.vector_store import get_all_documents, get_vector_store
 
 
-def retrieve_context(query: str, k: int | None = None) -> tuple[str, bool]:
-    """Retrieve relevant context for a query and return as a formatted string with relevance indicator.
+@lru_cache(maxsize=1)
+def get_hybrid_retriever() -> EnsembleRetriever:
+    """Return a hybrid retriever combining vector similarity and BM25 keyword search.
 
-    This is the main entry point used by the agent's retrieve node.
+    Both retrievers operate over the same document set stored in the vector store.
+    The result is cached; call ``clear_retriever_caches()`` after ingesting new
+    documents.
+    """
+    vector_store = get_vector_store()
+    vector_retriever = vector_store.as_retriever(
+        search_kwargs={"k": settings.retriever_top_k},
+    )
+
+    # Load all documents from the vector store so BM25 indexes the same corpus
+    documents = get_all_documents()
+
+    if not documents:
+        logger.warning(
+            "Vector store is empty – BM25 retriever will be initialised with a "
+            "placeholder document.  Ingest data to get meaningful results."
+        )
+        # BM25Retriever.from_documents requires at least one document
+        documents = [Document(page_content="(empty knowledge base)", metadata={"source": "placeholder"})]
+
+    bm25_retriever = BM25Retriever.from_documents(
+        documents=documents, k=settings.retriever_top_k,
+    )
+
+    return EnsembleRetriever(
+        retrievers=[vector_retriever, bm25_retriever], weights=[0.7, 0.3],
+    )
+
+
+def get_context_after_re_ranker(query: str) -> list[Document]:
+    """Retrieve documents via the hybrid retriever and re-rank them.
 
     Args:
-        query: The search query string
-        k: Number of results to return (defaults to retriever_top_k)
+        query: The search query string.
 
     Returns:
-        Tuple of (formatted_context, is_relevant)
-        - formatted_context: String with retrieved documents
-        - is_relevant: Boolean indicating if top result meets similarity threshold
+        Re-ranked list of documents relevant to the query.
     """
-    docs_with_scores = similarity_search_with_scores(query, k=k)
-    
-    if not docs_with_scores:
-        logger.info(f"No documents found for query: {query[:100]}")
-        return "No relevant context found.", False
-    
-    # Check if the top result meets the similarity threshold
-    # Note: ChromaDB returns L2 distance scores where lower is better (0 = perfect match)
-    # The distance can range from 0 to infinity, but typically meaningful scores are < 2.0
-    top_score = docs_with_scores[0][1]
-    
-    # Convert similarity_threshold (0.7 = 70% similar) to a distance threshold
-    # Using a more lenient formula: distance_threshold = 2.5 * (1 - similarity_threshold)
-    # similarity_threshold=0.7 -> distance_threshold=0.75
-    # similarity_threshold=0.5 -> distance_threshold=1.25
-    distance_threshold = 2.5 * (1 - settings.similarity_threshold)
-    is_relevant = top_score <= distance_threshold
-    
-    logger.info(
-        f"Top distance score: {top_score:.3f} (lower is better), "
-        f"Distance threshold: {distance_threshold:.3f}, "
-        f"Is relevant: {is_relevant}"
-    )
-    
-    # Format each chunk with its source metadata and score
-    sections: list[str] = []
-    for i, (doc, score) in enumerate(docs_with_scores, 1):
-        source = doc.metadata.get("source", "unknown")
-        sections.append(
-            f"[{i}] (source: {source}, score: {score:.3f})\n{doc.page_content}"
-        )
-    
-    formatted_context = "\n\n---\n\n".join(sections)
-    return formatted_context, is_relevant
+    # Lazy import to avoid circular dependency (re_ranker → retriever → re_ranker)
+    from src.rag.re_ranker import get_re_ranker_retriever
+
+    re_ranker_retriever = get_re_ranker_retriever()
+    docs: list[Document] = re_ranker_retriever.invoke(query)
+    logger.info(f"Re-ranker returned {len(docs)} document(s) for query: {query[:100]}")
+    return docs

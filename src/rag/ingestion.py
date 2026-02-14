@@ -6,7 +6,6 @@ from pathlib import Path
 
 from langchain_community.document_loaders import (
     DirectoryLoader,
-    PyPDFLoader,
     TextLoader,
 )
 from langchain_core.documents import Document
@@ -35,15 +34,13 @@ def load_documents(data_dir: str | Path = "data") -> list[Document]:
     )
     documents.extend(txt_loader.load())
 
-    # Load PDF files
-    pdf_loader = DirectoryLoader(
-        str(data_path), glob="**/*.pdf", loader_cls=PyPDFLoader, show_progress=True
-    )
-    documents.extend(pdf_loader.load())
 
     logger.info(f"Loaded {len(documents)} document(s) from '{data_path}'.")
     return documents
 
+def load_text_content(content: str) -> list[Document]:
+    document = Document(page_content=content, metadata={"source": "text"})
+    return [document]
 
 def split_documents(documents: list[Document]) -> list[Document]:
     """Split documents into chunks suitable for embedding."""
@@ -83,11 +80,13 @@ def ingest_text_content(content: str, metadata: dict | None = None) -> list[Docu
         logger.warning("Empty content provided for ingestion")
         return []
 
-    # Create a Document object with the content
-    metadata = metadata or {}
-    doc = Document(page_content=content, metadata=metadata)
-
     # Split the document into chunks using the existing splitter
-    chunks = split_documents([doc])
+    chunks = split_documents(load_text_content(content))
+
+    # Apply caller-supplied metadata to every chunk so provenance is preserved
+    if metadata:
+        for chunk in chunks:
+            chunk.metadata.update(metadata)
+
     logger.info(f"Ingested text content into {len(chunks)} chunk(s)")
     return chunks

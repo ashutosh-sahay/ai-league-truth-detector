@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+import json
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, HTTPException
 from loguru import logger
 from pydantic import BaseModel, Field
 
 from src.agents.rag_agent import create_rag_agent
 
 router = APIRouter()
+
+# Compile the agent graph once at module level – the compiled graph is
+# stateless and safe to reuse across requests.
+_rag_agent = create_rag_agent()
 
 
 # ---------------------------------------------------------------------------
@@ -28,48 +32,14 @@ class VerifyResponse(BaseModel):
     """Response body for the /verify endpoint."""
 
     claim: str
-    analysis: str
-    # confidence: float = 0.0
+    verification_data: str
+    evidence_source: str  # "RAG Store" or "WEB"
+    claim_verified: bool
 
 
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
-
-
-def ingest_web_results_background(web_content: str, query: str) -> None:
-    """Background task to ingest web search results into the vector store.
-
-    Args:
-        web_content: The web search results content
-        query: The original query that triggered the web search
-    """
-    try:
-        from src.rag.ingestion import ingest_text_content
-        from src.rag.vector_store import add_documents
-
-        logger.info(f"Starting background ingestion for query: {query[:100]}")
-
-        # Create metadata for traceability
-        metadata = {
-            "source": "web_search",
-            "query": query,
-            "timestamp": datetime.utcnow().isoformat(),
-        }
-
-        # Ingest the web content
-        chunks = ingest_text_content(content=web_content, metadata=metadata)
-
-        if chunks:
-            add_documents(chunks)
-            logger.info(
-                f"Successfully ingested {len(chunks)} chunk(s) from web search in background"
-            )
-        else:
-            logger.warning("No chunks generated from web content")
-
-    except Exception as e:
-        logger.error(f"Error in background ingestion: {e}")
 
 
 @router.get("/health")
@@ -79,36 +49,47 @@ async def health_check():
 
 
 @router.post("/verify", response_model=VerifyResponse)
-async def verify_claim(request: VerifyRequest, background_tasks: BackgroundTasks):
+async def verify_claim(request: VerifyRequest):
     """Verify a claim using the Agentic RAG pipeline.
 
-    If the local knowledge base doesn't have relevant information,
-    the agent will perform a web search. The web results will be
-    returned to the user immediately, and then asynchronously
-    ingested into the vector store for future queries.
+    Workflow:
+    1. Retrieve evidence from the RAG vector store
+    2. Evaluate the claim against retrieved evidence
+    3. If evidence is sufficient (confidence > 0.7) → return result
+    4. Otherwise → web search → evaluate → sync to RAG store → return result
     """
     logger.info(f"Received claim: {request.claim[:100]}...")
 
     try:
-        agent = create_rag_agent()
-        result = agent.invoke({"query": request.claim})
+        result = _rag_agent.invoke({"query": request.claim})
 
-        # Extract the last AI message as the analysis
+        # Extract the structured output from the last AI message
         ai_messages = [m for m in result["messages"] if hasattr(m, "content")]
-        analysis = ai_messages[-1].content if ai_messages else "No analysis produced."
 
-        # Check if web search was used (web_results field will be populated)
-        if result.get("web_results"):
-            logger.info("Web search was used, scheduling background ingestion")
-            background_tasks.add_task(
-                ingest_web_results_background,
-                web_content=result["web_results"],
-                query=request.claim,
-            )
+        if ai_messages:
+            try:
+                output = json.loads(ai_messages[-1].content)
+            except json.JSONDecodeError:
+                # Fallback: build from state fields
+                output = {
+                    "claim": result.get("claim", request.claim),
+                    "verification_data": result.get("verification_data", ai_messages[-1].content),
+                    "evidence_source": result.get("evidence_source", "unknown"),
+                    "claim_verified": result.get("claim_verified", False),
+                }
+        else:
+            output = {
+                "claim": request.claim,
+                "verification_data": "No analysis produced.",
+                "evidence_source": "unknown",
+                "claim_verified": False,
+            }
 
         return VerifyResponse(
-            claim=request.claim,
-            analysis=analysis,
+            claim=output["claim"],
+            verification_data=output["verification_data"],
+            evidence_source=output["evidence_source"],
+            claim_verified=output["claim_verified"],
         )
     except Exception as e:
         logger.error(f"Error verifying claim: {e}")
