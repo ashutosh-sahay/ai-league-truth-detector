@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Truth Detector - Extension Test Page</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      line-height: 1.6;
+      color: #333;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      padding: 40px 20px;
+      min-height: 100vh;
+    }
+    
+    .container {
+      max-width: 800px;
+      margin: 0 auto;
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      padding: 40px;
+    }
+    
+    h1 {
+      color: #667eea;
+      font-size: 32px;
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    
+    .subtitle {
+      color: #6c757d;
+      font-size: 18px;
+      margin-bottom: 40px;
+    }
+    
+    .section {
+      margin-bottom: 40px;
+    }
+    
+    h2 {
+      color: #495057;
+      font-size: 20px;
+      margin-bottom: 16px;
+      padding-bottom: 8px;
+      border-bottom: 2px solid #e9ecef;
+    }
+    
+    .claim-box {
+      background: #f8f9fa;
+      border-left: 4px solid #667eea;
+      padding: 20px;
+      margin-bottom: 16px;
+      border-radius: 4px;
+      cursor: help;
+      transition: background 0.2s, transform 0.2s;
+    }
+    
+    .claim-box:hover {
+      background: #e9ecef;
+      transform: translateX(4px);
+    }
+    
+    .claim-box.true {
+      border-left-color: #28a745;
+    }
+    
+    .claim-box.false {
+      border-left-color: #dc3545;
+    }
+    
+    .claim-box.mixed {
+      border-left-color: #ffc107;
+    }
+    
+    .claim-label {
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #6c757d;
+      margin-bottom: 8px;
+    }
+    
+    .claim-box.true .claim-label {
+      color: #28a745;
+    }
+    
+    .claim-box.false .claim-label {
+      color: #dc3545;
+    }
+    
+    .claim-box.mixed .claim-label {
+      color: #ffc107;
+    }
+    
+    .claim-text {
+      font-size: 16px;
+      color: #1a1a1a;
+    }
+    
+    .instruction {
+      background: #fff3cd;
+      border-left: 4px solid #ffc107;
+      padding: 16px;
+      margin-bottom: 30px;
+      border-radius: 4px;
+    }
+    
+    .instruction strong {
+      color: #856404;
+    }
+    
+    .instruction ol {
+      margin: 12px 0 0 20px;
+    }
+    
+    .instruction li {
+      margin: 6px 0;
+      color: #856404;
+    }
+    
+    .note {
+      background: #d1ecf1;
+      border-left: 4px solid #17a2b8;
+      padding: 16px;
+      border-radius: 4px;
+      margin-top: 30px;
+      font-size: 14px;
+      color: #0c5460;
+    }
+    
+    .footer {
+      text-align: center;
+      margin-top: 40px;
+      padding-top: 20px;
+      border-top: 1px solid #e9ecef;
+      color: #6c757d;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>
+      <span>🔍</span>
+      AI Truth Detector Test Page
+    </h1>
+    
+    <p class="subtitle">
+      Use this page to test your Chrome extension! Highlight any claim below and right-click to verify.
+    </p>
+    
+    <div class="instruction">
+      <strong>How to test:</strong>
+      <ol>
+        <li>Make sure your backend is running: <code>python -m src.main</code></li>
+        <li>Highlight any claim below (click and drag to select)</li>
+        <li>Right-click on the selected text</li>
+        <li>Click "Verify claim" from the context menu</li>
+        <li>Watch the result popup appear!</li>
+      </ol>
+    </div>
+    
+    <div class="section">
+      <h2>✅ True Claims (Should be Verified)</h2>
+      
+      <div class="claim-box true">
+        <div class="claim-label">Try this: Google Founding</div>
+        <div class="claim-text">
+          Google was founded on September 4, 1998, by Larry Page and Sergey Brin while they were PhD students at Stanford University.
+        </div>
+      </div>
+      
+      <div class="claim-box true">
+        <div class="claim-label">Try this: Google Funding</div>
+        <div class="claim-text">
+          Google received its first funding of $100,000 from Andy Bechtolsheim, co-founder of Sun Microsystems.
+        </div>
+      </div>
+      
+      <div class="claim-box true">
+        <div class="claim-label">Try this: Alphabet Restructuring</div>
+        <div class="claim-text">
+          In 2015, Google was reorganized as a wholly owned subsidiary of Alphabet Inc.
+        </div>
+      </div>
+    </div>
+    
+    <div class="section">
+      <h2>❌ False Claims (Should NOT be Verified)</h2>
+      
+      <div class="claim-box false">
+        <div class="claim-label">Try this: Wrong CEO</div>
+        <div class="claim-text">
+          Jeff Bezos is the current CEO of Google.
+        </div>
+      </div>
+      
+      <div class="claim-box false">
+        <div class="claim-label">Try this: Wrong Year</div>
+        <div class="claim-text">
+          Google was founded in 1985 in Silicon Valley.
+        </div>
+      </div>
+      
+      <div class="claim-box false">
+        <div class="claim-label">Try this: Wrong Company</div>
+        <div class="claim-text">
+          Google acquired Microsoft in 2020 for $500 billion.
+        </div>
+      </div>
+    </div>
+    
+    <div class="section">
+      <h2>🌐 Web Search Required (Not in Local KB)</h2>
+      
+      <div class="claim-box mixed">
+        <div class="claim-label">Try this: General Knowledge</div>
+        <div class="claim-text">
+          The Eiffel Tower is located in Paris, France and was completed in 1889.
+        </div>
+      </div>
+      
+      <div class="claim-box mixed">
+        <div class="claim-label">Try this: Current Events</div>
+        <div class="claim-text">
+          Python 3.12 was released in October 2023 with improved error messages.
+        </div>
+      </div>
+      
+      <div class="claim-box mixed">
+        <div class="claim-label">Try this: Science</div>
+        <div class="claim-text">
+          Water boils at 100 degrees Celsius at sea level atmospheric pressure.
+        </div>
+      </div>
+    </div>
+    
+    <div class="note">
+      <strong>💡 Tips:</strong>
+      <ul style="margin: 8px 0 0 20px;">
+        <li>The first time you verify a claim requiring web search, it takes 2-3 seconds</li>
+        <li>Subsequent verifications of similar topics are instant (cached in local knowledge base)</li>
+        <li>Click the extension icon in your toolbar to check API connection status</li>
+        <li>Try highlighting partial sentences or multiple sentences!</li>
+      </ul>
+    </div>
+    
+    <div class="footer">
+      <p>🚀 AI Truth Detector | Built with LangChain, LangGraph, ChromaDB & FastAPI</p>
+      <p style="margin-top: 8px; font-size: 12px;">
+        Backend running at: <code>http://localhost:8000</code>
+      </p>
+    </div>
+  </div>
+</body>
+</html>

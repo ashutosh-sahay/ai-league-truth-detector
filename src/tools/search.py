@@ -10,7 +10,7 @@ from src.config import settings
 
 
 @tool
-def web_search_tool(query: str) -> str:
+def web_search_tool(query: str) -> dict:
     """Search the web for up-to-date information about a topic.
 
     Use this tool when the local knowledge base does not contain
@@ -20,19 +20,22 @@ def web_search_tool(query: str) -> str:
         query: The search query string
 
     Returns:
-        Formatted search results with titles, URLs, and content snippets
+        Dict with 'formatted' (str) for LLM and 'structured' (list) for metadata
     """
     try:
         if not settings.tavily_api_key:
             logger.error("Tavily API key not configured")
-            return "Error: Tavily API key not configured. Please set TAVILY_API_KEY in .env"
+            return {
+                "formatted": "Error: Tavily API key not configured. Please set TAVILY_API_KEY in .env",
+                "structured": []
+            }
 
         client = TavilyClient(api_key=settings.tavily_api_key)
         
         # Perform search with basic depth and limit results to 5
         response = client.search(
             query=query,
-            search_depth="basic",
+            search_depth="advanced",
             max_results=5,
             include_answer=False,
             include_raw_content=False
@@ -40,7 +43,10 @@ def web_search_tool(query: str) -> str:
         
         if not response.get("results"):
             logger.warning(f"No web search results found for query: {query[:100]}")
-            return "No relevant web search results found."
+            return {
+                "formatted": "No relevant web search results found.",
+                "structured": []
+            }
         
         # Format results for the LLM
         formatted_results = []
@@ -56,8 +62,14 @@ def web_search_tool(query: str) -> str:
             )
         
         logger.info(f"Retrieved {len(formatted_results)} web search results for query: {query[:100]}")
-        return "\n\n---\n\n".join(formatted_results)
+        return {
+            "formatted": "\n\n---\n\n".join(formatted_results),
+            "structured": response["results"]
+        }
         
     except Exception as e:
         logger.error(f"Error performing web search: {e}")
-        return f"Error performing web search: {str(e)}"
+        return {
+            "formatted": f"Error performing web search: {str(e)}",
+            "structured": []
+        }

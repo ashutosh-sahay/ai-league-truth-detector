@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Truth Detector</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="header-content">
+        <span class="icon">🔍</span>
+        <h1>AI Truth Detector</h1>
+      </div>
+    </header>
+    
+    <main>
+      <section class="status-section">
+        <h2>API Status</h2>
+        <div id="api-status" class="status-indicator">
+          <div class="spinner"></div>
+          <span>Checking...</span>
+        </div>
+      </section>
+      
+      <section class="usage-section">
+        <h2>How to Use</h2>
+        <ol>
+          <li>Select any text on a webpage</li>
+          <li>Right-click and choose <strong>"Verify claim"</strong></li>
+          <li>View the verification result in the popup</li>
+        </ol>
+      </section>
+      
+      <section class="settings-section">
+        <h2>Settings</h2>
+        <div class="form-group">
+          <label for="api-url">API Base URL</label>
+          <input 
+            type="text" 
+            id="api-url" 
+            placeholder="http://localhost:8000"
+            value="http://localhost:8000"
+          >
+          <button id="save-settings" class="btn-primary">Save Settings</button>
+          <div id="save-message" class="save-message"></div>
+        </div>
+      </section>
+      
+      <section class="info-section">
+        <h2>About</h2>
+        <p>
+          This extension uses an AI-powered RAG (Retrieval-Augmented Generation) system 
+          to verify claims and detect misinformation. The system combines local knowledge 
+          base search with real-time web search to provide accurate verification.
+        </p>
+        <p class="note">
+          <strong>Note:</strong> Make sure your local API server is running at the configured URL.
+        </p>
+      </section>
+    </main>
+    
+    <footer>
+      <p>Version 1.0.0 | Made with AI League</p>
+    </footer>
+  </div>
+  
+  <script src="popup.js"></script>
+</body>
+</html>

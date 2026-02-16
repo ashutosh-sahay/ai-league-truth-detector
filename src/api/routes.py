@@ -34,7 +34,8 @@ class VerifyResponse(BaseModel):
     claim: str
     verification_data: str
     evidence_source: str  # "RAG Store" or "WEB"
-    claim_verified: bool
+    source_urls: list[str]  # Array of URLs where evidence was fetched
+    claim_verdict: bool
 
 
 # ---------------------------------------------------------------------------
@@ -75,21 +76,24 @@ async def verify_claim(request: VerifyRequest):
                     "claim": result.get("claim", request.claim),
                     "verification_data": result.get("verification_data", ai_messages[-1].content),
                     "evidence_source": result.get("evidence_source", "unknown"),
-                    "claim_verified": result.get("claim_verified", False),
+                    "source_urls": result.get("source_urls", []),
+                    "claim_verdict": result.get("claim_verdict", False),
                 }
         else:
             output = {
                 "claim": request.claim,
                 "verification_data": "No analysis produced.",
                 "evidence_source": "unknown",
-                "claim_verified": False,
+                "source_urls": [],
+                "claim_verdict": False,
             }
 
         return VerifyResponse(
             claim=output["claim"],
             verification_data=output["verification_data"],
             evidence_source=output["evidence_source"],
-            claim_verified=output["claim_verified"],
+            source_urls=output.get("source_urls", []),
+            claim_verdict=output["claim_verdict"],
         )
     except Exception as e:
         logger.error(f"Error verifying claim: {e}")

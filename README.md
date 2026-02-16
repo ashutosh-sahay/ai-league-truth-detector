@@ -26,6 +26,12 @@ An **Agentic RAG** (Retrieval-Augmented Generation) system for verifying claims 
 │   ├── config.py          # Centralised settings (Pydantic Settings)
 │   ├── logger.py          # Logging configuration
 │   └── main.py            # Entry point (uvicorn)
+├── extension/             # Chrome extension for in-browser verification
+│   ├── manifest.json      # Extension configuration
+│   ├── background.js      # Service worker
+│   ├── content.js         # Content script
+│   ├── popup.html/css/js  # Extension popup UI
+│   └── README.md          # Extension installation guide
 ├── scripts/
 │   └── ingest.py          # CLI script for document ingestion
 ├── tests/                 # Test suite
@@ -97,6 +103,17 @@ python -m src.main
 
 The server starts at **http://localhost:8000**. API docs are available at **http://localhost:8000/docs**.
 
+### 7. Install the Chrome Extension (Optional)
+
+For in-browser claim verification:
+
+1. Open Chrome and go to `chrome://extensions/`
+2. Enable **Developer mode** (top-right toggle)
+3. Click **Load unpacked** and select the `extension/` folder
+4. Highlight text on any webpage, right-click, and select **"Verify claim"**
+
+See [`extension/README.md`](extension/README.md) for detailed instructions.
+
 ---
 
 ## How It Works
@@ -114,7 +131,7 @@ The system verifies claims through an **LLM-driven** evaluation workflow. There 
 2. **Evaluate (RAG)** — The top-5 re-ranked documents are passed to **GPT-4o** along with the claim. The LLM returns a structured `ClaimEvaluation`:
    - `evidence_found` (bool) — did the documents contain relevant information?
    - `confidence` (float, 0.0 – 1.0) — how well does the evidence address the claim?
-   - `claim_verified` (bool) — is the claim true based on the evidence?
+   - `claim_verdict` (bool) — is the claim true based on the evidence?
    - `verification_data` (str) — detailed analysis
 
 3. **Route** — The agent checks the LLM's own assessment:
@@ -125,7 +142,7 @@ The system verifies claims through an **LLM-driven** evaluation workflow. There 
 
 5. **Evaluate (Web)** — The same GPT-4o evaluation runs again, this time against the web results, producing a fresh `ClaimEvaluation`.
 
-6. **Sync to RAG** — The web results are chunked, tagged with `{"source": "web_search"}` metadata, embedded, and added to ChromaDB so that future queries on the same topic are answered locally.
+6. **Sync to RAG** — The web results are individually processed: each result is chunked, tagged with rich metadata (`source_url`, `title`, `source_type`, `query`), embedded, and added to ChromaDB with proper source attribution for future citation.
 
 7. **Format Output** — The final verdict is packaged into a structured JSON response and returned to the caller.
 
@@ -143,7 +160,7 @@ The workflow is implemented as a **6-node LangGraph** state machine, compiled on
           └─────┬─────┘
                 │
         ┌───────▼────────┐
-        │  evaluate_rag  │  GPT-4o: evidence_found? confidence? claim_verified?
+        │  evaluate_rag  │  GPT-4o: evidence_found? confidence? claim_verdict?
         └───────┬────────┘
                 │
         ┌───────▼────────┐
@@ -175,12 +192,12 @@ The workflow is implemented as a **6-node LangGraph** state machine, compiled on
 ### Self-Improving Knowledge Base
 
 Every time the web search path is taken, new knowledge is automatically ingested back into the vector store:
-- Web results are split into chunks using `RecursiveCharacterTextSplitter`
-- Each chunk is tagged with metadata `{"source": "web_search", "query": "<original claim>"}`
-- Chunks are embedded and stored in ChromaDB
+- Each web result is processed individually with its own metadata
+- Chunks are tagged with `source_url` (actual URL), `title`, `source_type` ("web"), and the original `query`
+- Each chunk is embedded and stored in ChromaDB with full provenance
 - Retriever caches are cleared so the next query sees the updated corpus
 
-This means the first query about a new topic triggers a web search, but subsequent queries on the same topic are answered entirely from local knowledge.
+This means the first query about a new topic triggers a web search, but subsequent queries on the same topic are answered entirely from local knowledge **with proper source citations**.
 
 ---
 
@@ -209,11 +226,13 @@ Response body:
   "claim": "Google was founded on September 4, 1998.",
   "verification_data": "The evidence confirms that Google was founded on September 4, 1998, by Larry Page and Sergey Brin while they were PhD students at Stanford University.",
   "evidence_source": "RAG Store",
-  "claim_verified": true
+  "source_urls": ["data/Google.txt"],
+  "claim_verdict": true
 }
 ```
 
 - `evidence_source` is `"RAG Store"` when answered from local knowledge, or `"WEB"` when web search was used.
+- `source_urls` contains the actual URLs or file paths where evidence was found (enables proper citation).
 
 ### Example: Verify claims
 
@@ -320,6 +339,25 @@ pytest
 | API | **FastAPI** + **uvicorn** | REST API with auto-generated OpenAPI docs |
 | Configuration | **Pydantic Settings** | Type-safe settings from `.env` |
 | Logging | **Loguru** | Structured logging throughout the pipeline |
+
+---
+
+## Chrome Extension
+
+The project includes a Chrome extension for verifying claims directly from any webpage:
+
+- **Highlight text** → Right-click → "Verify claim"
+- Beautiful popup with verification results
+- Works with the local backend (no external services)
+- Real-time status indicator
+
+**Quick Install:**
+1. Go to `chrome://extensions/`
+2. Enable Developer mode
+3. Load unpacked → select `extension/` folder
+4. Start using it on any webpage!
+
+See [`extension/README.md`](extension/README.md) for full documentation.
 
 ---
 
