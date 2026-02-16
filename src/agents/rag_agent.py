@@ -44,7 +44,7 @@ You MUST respond with a JSON object containing exactly these fields:
   evidence adequately addresses the claim.
 - "verification_data" (str): a detailed analysis explaining how the evidence
   supports or refutes the claim.
-- "claim_verified" (bool): true if the claim is verified as true based on the
+- "claim_verdict" (bool): true if the claim is verified as true based on the
   evidence, false otherwise.
 
 Guidelines:
@@ -78,14 +78,31 @@ def evaluate_rag_node(state: AgentState) -> dict:
         temperature=0,
     )
 
-    # Format retrieved documents as evidence text
+    # Format retrieved documents as evidence text and extract source URLs
+    source_urls = []
     if state.context:
         evidence_parts = []
         for i, doc in enumerate(state.context, 1):
-            source = doc.metadata.get("source", "unknown")
+            # Try source_url first (web results), fallback to source (file paths)
+            source_url = doc.metadata.get("source_url") or doc.metadata.get("source", "unknown")
+            source_type = doc.metadata.get("source_type", "file")
+            title = doc.metadata.get("title", "")
+            
+            # Format evidence with source info
+            source_label = f"{title} ({source_url})" if title else source_url
             evidence_parts.append(
-                f"[{i}] (source: {source})\n{doc.page_content}"
+                f"[{i}] (source: {source_label})\n{doc.page_content}"
             )
+            
+            # Collect unique URLs (handle both web URLs and file paths)
+            if source_url and source_url != "unknown":
+                if source_type == "web" or source_url.startswith(("http://", "https://")):
+                    if source_url not in source_urls:
+                        source_urls.append(source_url)
+                elif source_type == "file":
+                    # For file sources, use the file path
+                    if source_url not in source_urls:
+                        source_urls.append(source_url)
         evidence_text = "\n\n---\n\n".join(evidence_parts)
     else:
         evidence_text = "No documents were retrieved from the knowledge base."
@@ -107,15 +124,16 @@ def evaluate_rag_node(state: AgentState) -> dict:
     logger.info(
         f"RAG evaluation → evidence_found={evaluation.evidence_found}, "
         f"confidence={evaluation.confidence:.2f}, "
-        f"claim_verified={evaluation.claim_verified}"
+        f"claim_verdict={evaluation.claim_verdict}"
     )
 
     return {
         "evidence_found": evaluation.evidence_found,
         "confidence": evaluation.confidence,
         "verification_data": evaluation.verification_data,
-        "claim_verified": evaluation.claim_verified,
+        "claim_verdict": evaluation.claim_verdict,
         "evidence_source": "RAG Store",
+        "source_urls": source_urls,
     }
 
 
@@ -142,8 +160,11 @@ def route_after_evaluation(state: AgentState) -> str:
 def web_search_node(state: AgentState) -> dict:
     """Perform web search when the RAG store lacks sufficient evidence."""
     logger.info(f"Performing web search for claim: {state.query[:100]}")
-    web_results = web_search_tool.invoke({"query": state.query})
-    return {"web_results": web_results}
+    search_response = web_search_tool.invoke({"query": state.query})
+    return {
+        "web_results": search_response["formatted"],
+        "web_results_structured": search_response["structured"]
+    }
 
 
 def evaluate_web_node(state: AgentState) -> dict:
@@ -155,6 +176,14 @@ def evaluate_web_node(state: AgentState) -> dict:
         api_key=settings.openai_api_key,
         temperature=0,
     )
+
+    # Extract URLs from structured web results
+    source_urls = []
+    if state.web_results_structured:
+        for result in state.web_results_structured:
+            url = result.get("url", "")
+            if url and url != "No URL" and url not in source_urls:
+                source_urls.append(url)
 
     messages = [
         SystemMessage(content=EVALUATE_CLAIM_PROMPT),
@@ -173,43 +202,70 @@ def evaluate_web_node(state: AgentState) -> dict:
     logger.info(
         f"Web evaluation → evidence_found={evaluation.evidence_found}, "
         f"confidence={evaluation.confidence:.2f}, "
-        f"claim_verified={evaluation.claim_verified}"
+        f"claim_verdict={evaluation.claim_verdict}"
     )
 
     return {
         "evidence_found": evaluation.evidence_found,
         "confidence": evaluation.confidence,
         "verification_data": evaluation.verification_data,
-        "claim_verified": evaluation.claim_verified,
+        "claim_verdict": evaluation.claim_verdict,
         "evidence_source": "WEB",
+        "source_urls": source_urls,
     }
 
 
 def sync_to_rag_node(state: AgentState) -> dict:
-    """Sync web search results back into the RAG store for future queries.
+    """Sync web search results back into the RAG store with proper source URLs.
 
     This ensures that knowledge discovered via web search is available
     for subsequent lookups without needing another web call.
     """
     logger.info("Syncing web search results to RAG store")
 
-    if not state.web_results:
-        logger.warning("No web results to sync")
+    if not state.web_results_structured:
+        logger.warning("No structured web results to sync")
         return {}
 
     try:
-        # Ingest the raw web results as new documents
-        chunks = ingest_text_content(
-            content=state.web_results,
-            metadata={"source": "web_search", "query": state.query},
-        )
-        if chunks:
-            add_documents(chunks)
+        all_chunks = []
+        
+        # Process each search result individually
+        for result in state.web_results_structured:
+            url = result.get("url", "")
+            if not url or url == "No URL":
+                continue
+                
+            # Create rich metadata for this result
+            metadata = {
+                "source": url,
+                "source_url": url,  # Explicit URL field
+                "title": result.get("title", ""),
+                "source_type": "web",
+                "query": state.query,
+            }
+            
+            # Add optional fields if available
+            if "published_date" in result:
+                metadata["published_date"] = result["published_date"]
+            if "score" in result:
+                metadata["relevance_score"] = result["score"]
+            
+            # Ingest this result's content with its metadata
+            chunks = ingest_text_content(
+                content=result.get("content", ""),
+                metadata=metadata
+            )
+            all_chunks.extend(chunks)
+        
+        if all_chunks:
+            add_documents(all_chunks)
             logger.info(
-                f"Synced {len(chunks)} chunk(s) from web results to RAG store"
+                f"Synced {len(all_chunks)} chunk(s) from {len(state.web_results_structured)} web results to RAG store"
             )
         else:
             logger.warning("No chunks produced from web results")
+            
     except Exception as e:
         logger.error(f"Failed to sync web results to RAG store: {e}")
 
@@ -222,12 +278,14 @@ def format_output_node(state: AgentState) -> dict:
         "claim": state.claim,
         "verification_data": state.verification_data,
         "evidence_source": state.evidence_source,
-        "claim_verified": state.claim_verified,
+        "source_urls": state.source_urls,
+        "claim_verdict": state.claim_verdict,
     }
 
     logger.info(
         f"Final output → evidence_source={state.evidence_source}, "
-        f"claim_verified={state.claim_verified}"
+        f"claim_verdict={state.claim_verdict}, "
+        f"source_urls={len(state.source_urls)} URLs"
     )
 
     return {

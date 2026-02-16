@@ -22,7 +22,7 @@ class ClaimEvaluation(BaseModel):
     verification_data: str = Field(
         description="Detailed analysis and evidence supporting the evaluation"
     )
-    claim_verified: bool = Field(
+    claim_verdict: bool = Field(
         description="Whether the claim is verified as true based on the evidence"
     )
 
@@ -44,10 +44,12 @@ class AgentState(BaseModel):
     confidence: float = 0.0  # Confidence score (0.0 – 1.0)
 
     # --- Web search fallback ---
-    web_results: str = ""  # Raw web search results
+    web_results: str = ""  # Formatted web search results for LLM
+    web_results_structured: list[dict] = Field(default_factory=list)  # Raw Tavily results for metadata
 
     # --- Final output fields ---
     claim: str = ""  # Echo of the user query (claim)
     verification_data: str = ""  # Evidence / analysis text (from RAG or Web)
     evidence_source: str = ""  # "RAG Store" or "WEB"
-    claim_verified: bool = False  # Whether the claim is verified as true
+    source_urls: list[str] = Field(default_factory=list)  # URLs/sources where evidence was fetched
+    claim_verdict: bool = False  # Whether the claim is verified as true

@@ -93,3 +93,67 @@ def similarity_search_with_scores(query: str, k: int | None = None) -> list[tupl
         f"Retrieved {len(results)} result(s) with scores for query: {query[:80]}..."
     )
     return results
+
+
+def clear_collection() -> None:
+    """Delete all documents from the vector store collection.
+    
+    This removes all embeddings and documents but keeps the collection itself.
+    Useful for starting fresh with new data.
+    """
+    try:
+        store = get_vector_store()
+        collection = store._collection
+        
+        # Get all document IDs
+        data = store.get()
+        ids = data.get("ids", [])
+        
+        if not ids:
+            logger.info("Collection is already empty.")
+            return
+        
+        # Delete all documents by their IDs
+        collection.delete(ids=ids)
+        logger.info(f"Cleared {len(ids)} document(s) from collection '{settings.chroma_collection_name}'.")
+        
+        # Clear retriever caches since the data changed
+        clear_retriever_caches()
+        
+    except Exception as e:
+        logger.error(f"Error clearing collection: {e}")
+        raise
+
+
+def reset_collection() -> None:
+    """Completely delete and recreate the collection.
+    
+    This removes the entire collection and creates a fresh one.
+    Use this if you want a complete reset including collection metadata.
+    """
+    try:
+        import chromadb
+        
+        # Get the persistent client
+        client = chromadb.PersistentClient(path=settings.chroma_persist_dir)
+        
+        # Delete the collection if it exists
+        try:
+            client.delete_collection(name=settings.chroma_collection_name)
+            logger.info(f"Deleted collection '{settings.chroma_collection_name}'.")
+        except Exception:
+            logger.warning(f"Collection '{settings.chroma_collection_name}' does not exist.")
+        
+        # Clear the cached vector store so it gets recreated
+        get_vector_store.cache_clear()
+        
+        # Recreate the collection by calling get_vector_store
+        store = get_vector_store()
+        logger.info(f"Recreated collection '{settings.chroma_collection_name}'.")
+        
+        # Clear retriever caches
+        clear_retriever_caches()
+        
+    except Exception as e:
+        logger.error(f"Error resetting collection: {e}")
+        raise
