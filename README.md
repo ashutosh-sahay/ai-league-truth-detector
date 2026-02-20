@@ -1,6 +1,6 @@
-# AI League Truth Detector
+# AI News Claim Verifier
 
-An **Agentic RAG** (Retrieval-Augmented Generation) system for verifying claims and detecting misinformation, built with LangChain, LangGraph, ChromaDB, Tavily, and FastAPI.
+An **Agentic RAG** (Retrieval-Augmented Generation) system for verifying claims and detecting misinformation, built with LangChain, LangGraph, ChromaDB, Tavily, and FastAPI. Used on Browser via a chrome extension
 
 ---
 
